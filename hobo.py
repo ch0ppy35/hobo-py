@@ -1,42 +1,18 @@
-"""
-Python package for working with HOBO data logger data.
-
-Specifically, this has been tested with CSV exports from Onset HOBO U23-001
-data loggers. It may or may not handle data from other HOBO loggers, though
-HoboWare likely produces a compatible CSV format for other similar hardware.
-
-License: As a work of the United States Government, this project is in the
-public domain within the United States.
-
-2016-02-24  David A. Riggs, Physical Science Tech, Lava Beds National Monument
-"""
-
-from __future__ import print_function
-
-import sys
-import re
 import csv
+import re
 from datetime import datetime, timedelta, tzinfo
-try:
-    from StringIO import StringIO
-except ImportError:
-    from io import StringIO
+from io import StringIO
 
-
-__version__ = '0.0.2-dev'
-
-__all__ = 'HoboCSVReader',
-
+__version__ = "0.1.0-hobo3"
 
 TIME_FMTS = [
-    '%m/%d/%y %I:%M:%S %p',  # Hoboware export
-    '%Y-%m-%d %H:%M:%S',     # HOBO MX2301
-    '%m/%d/%Y %H:%M'         # Excel edit and save (*thanks* Microsoft)
+    "%m/%d/%y %I:%M:%S %p",  # Hoboware export
+    "%m/%d/%Y %H:%M",  # Excel
 ]
 
-
-TZ_REGEX = re.compile('GMT\s?[-+]\d\d:\d\d')
-SN_REGEX = re.compile('(?:LGR S/N: |Serial Number:)(\d+)')
+TZ_REGEX = re.compile(r"GMT\s?[-+]\d\d:\d\d")
+SN_REGEX = re.compile(r"(?:LGR S/N: |Serial Number:)(\d+)")
+TITLE_REGEX = re.compile(r"Plot Title:\s")
 
 
 class TZFixedOffset(tzinfo):
@@ -48,24 +24,24 @@ class TZFixedOffset(tzinfo):
         if type(offset) in (int, float):
             self.offset_hrs = offset
         elif type(offset) == str:
-            if not TZ_REGEX.match(offset) or offset[-2:] != '00':
+            if not TZ_REGEX.match(offset) or offset[-2:] != "00":
                 raise ValueError(offset)
             self.offset_hrs = int(offset[-6:-3])  # extract whole hour and sign
         else:
             raise ValueError(offset)
         self.offset = timedelta(hours=self.offset_hrs)
-    
+
     def utcoffset(self, dt):
         return self.offset
-    
+
     def dst(self, dt):
         return timedelta(0)
-    
+
     def tzname(self, dt):
         return str(self)
 
     def __str__(self):
-        return 'GMT%+03d:00' % self.offset_hrs
+        return "GMT%+03d:00" % self.offset_hrs
 
     def __eq__(self, other):
         return other is not None and self.offset == other.offset
@@ -82,21 +58,20 @@ def timestamp(s, tz=None):
             return dt.replace(tzinfo=tz) if tz else dt
         except ValueError as e:
             pass
-    raise ValueError('time data "%s" does not match formats: %s' % (s, ', '.join(TIME_FMTS)))
+    raise ValueError(
+        'time data "%s" does not match formats: %s' % (s, ", ".join(TIME_FMTS))
+    )
 
 
 class HoboCSVReader(object):
     """
     Iterator over a HOBO CSV file, produces (timestamp, temperature, RH,
     battery) rows.
-
     :param str fname: CSV filename
     :param tzinfo as_timezone: explicit timezone to cast timestamps to
     :param bool strict: whether we should be strict or lenient in parsing CSV
-
     :raises Exception: if this doesn't appear to be a HOBOware or BoxCar exported CSV
     :raises ValueError: if required columns representing timestamp or temperature can't be located
-
     :ivar str fname:
     :ivar str title:
     :ivar str sn:
@@ -106,43 +81,58 @@ class HoboCSVReader(object):
 
     def __init__(self, fname, as_timezone=None, strict=True):
         self.fname = fname
-        self._f = open(fname, 'rt')
+        self._f = open(fname, "rt", encoding="utf-8-sig")
 
-        self._itimestamp, self._itemp, self._irh, self._ibatt, self.title, self.sn = None, None, None, None, None, None
+        self._itimestamp, self._itemp, self._irh, self._ibatt, self.title, self.sn = (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
         header = self._find_headers()
         if self._itimestamp is None:
-            raise ValueError('Unable to find required timestamp column!')
+            raise ValueError("Unable to find required timestamp column!")
         if self._itemp is None:
-            raise ValueError('Unable to find required temperature column!')
+            raise ValueError("Unable to find required temperature column!")
 
         tz_match = TZ_REGEX.search(header)
         self.tz = TZFixedOffset(tz_match.group()) if tz_match else None
-        self.as_timezone = TZFixedOffset(as_timezone) if type(as_timezone) in (int, float, str) else as_timezone
-        
+        self.as_timezone = (
+            TZFixedOffset(as_timezone)
+            if type(as_timezone) in (int, float, str)
+            else as_timezone
+        )
+
         self._reader = csv.reader(self._f, strict=strict)
 
-    def _find_col_timestamp(self, headers):
+    @staticmethod
+    def _find_col_timestamp(headers):
         for i, header in enumerate(headers):
-            if 'Date Time' in header:
+            if "Date Time" in header:
                 return i
 
-    def _find_col_temperature(self, headers):
+    @staticmethod
+    def _find_col_temperature(headers):
         for i, header in enumerate(headers):
-            if 'High Res. Temp.' in header or 'High-Res Temp' in header:
+            if "High Res. Temp." in header or "High-Res Temp" in header:
                 return i
         for i, header in enumerate(headers):
-            for s in ('Temp,', 'Temp.', 'Temperature'):
+            for s in ("Temp,", "Temp.", "Temperature"):
                 if s in header:
                     return i
 
-    def _find_col_rh(self, headers):
+    @staticmethod
+    def _find_col_rh(headers):
         for i, header in enumerate(headers):
-            if 'RH,' in header:
+            if "RH," in header:
                 return i
 
-    def _find_col_battery(self, headers):
+    @staticmethod
+    def _find_col_battery(headers):
         for i, header in enumerate(headers):
-            if 'Batt, V' in header:
+            if "Batt, V" in header:
                 return i
 
     def _find_columns(self, header):
@@ -157,7 +147,7 @@ class HoboCSVReader(object):
         while self._itimestamp is None:
             header = next(self._f)
             if self.title is None:
-                self.title = header.strip()  # TODO: rip out "Plot Title:"
+                self.title = TITLE_REGEX.sub("", header.strip())
             if self.sn is None:
                 sn_match = SN_REGEX.search(header)
                 self.sn = sn_match.groups()[0] if sn_match else None
@@ -167,7 +157,7 @@ class HoboCSVReader(object):
     def __iter__(self):
         """
         Iterator for accessing the actual CSV rows.
-        
+
         :return: yields (timestamp, temperature, RH, battery)
         :rtype: tuple(datetime, float, float, float)
         """
@@ -180,30 +170,16 @@ class HoboCSVReader(object):
             if self.as_timezone:
                 ts = ts.astimezone(self.as_timezone)
             temp = float(row[self._itemp])
-            rh = float(row[self._irh]) if self._irh is not None and row[self._irh] else None
-            batt = float(row[self._ibatt]) if self._ibatt is not None else None
+            rh = (
+                float(row[self._irh])
+                if self._irh is not None and row[self._irh]
+                else None
+            )
+            batt = float(row[self._ibatt]) if self._ibatt is not None else str("-")
             yield ts, temp, rh, batt
-
-    def unzip(self):
-        """
-        Rather than iterate row-by-row, return individual column lists
-        (timestamps, temperatures, RHs, batts)
-
-        :rtype: tuple of lists (timestamps, temperatures, RHs, batts)
-        """
-        return zip(*[row for row in self])
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         self._f.close()
-
-
-if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print('usage: %s CSVFILE' % sys.argv[0], file=sys.stderr)
-        sys.exit(2)
-    with HoboCSVReader(sys.argv[1]) as reader:
-        for row in reader:
-            print(row)
